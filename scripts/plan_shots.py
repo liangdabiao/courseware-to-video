@@ -329,8 +329,9 @@ def build_capture_actions(step: dict, mode: str, ov: dict) -> list[dict]:
             return []
         if mode != "motion":
             return [{"type": "set", "key": key, "value": to}]
-        # 分段扫描：0 → 1/3 → 2/3 → 终点，每档停一下
-        via = [round(to * r, 4) for r in (0.34, 0.67)]
+        # 分段扫描：从 0 开始逐档逼近终点，每档停一下。
+        # 起点保留很重要 —— 学生要看到"还没开始时是什么样"。
+        via = [round(to * r, 4) for r in (0.25, 0.55, 0.8)]
         via.append(to)
         return [
             {"type": "sweep", "key": key, "via": via, "hold": 900},
@@ -458,7 +459,9 @@ def plan(course: dict, profile: str = "core", overrides: dict | None = None) -> 
 
     # ---------------- 开场：悬念 ----------------
     title_q = clean_for_screen(mainline.get("q") or "")
-    hook = (ov.get("narration") or {}).get("title")
+    # 开场旁白可以按 "title" 或按拍号 "s01" 覆盖（拍号更直观）
+    hook = ((ov.get("narration") or {}).get("title")
+            or (ov.get("narration") or {}).get("s01"))
     if not hook:
         hook = f"{title_q}先别急着背结论，我们从这块沙盘开始，一段一段把它挖出来。"
     add(
@@ -469,7 +472,9 @@ def plan(course: dict, profile: str = "core", overrides: dict | None = None) -> 
         q=title_q,
         badge=clean_for_screen(meta.get("type", "")),
         data=[], formula="", bullets=[],
-        capture={"step": 0, "mode": "still", "actions": [], "settle_ms": 1400},
+        capture={"step": 0, "mode": "motion",
+                 "actions": [{"type": "orbit", "seconds": 6.5, "speed": 0.8}],
+                 "motion_ms": 7000, "settle_ms": 1400},
         note="开场：主线悬念",
     )
 
@@ -559,7 +564,9 @@ def plan(course: dict, profile: str = "core", overrides: dict | None = None) -> 
         badge="串联",
         data=[{"label": c["k"], "value": c["t"], "kind": "chain"} for c in chain],
         formula="", bullets=[],
-        capture={"step": 0, "mode": "still", "actions": [], "settle_ms": 1200},
+        capture={"step": 0, "mode": "motion",
+                 "actions": [{"type": "orbit", "seconds": 5.5, "speed": 0.85}],
+                 "motion_ms": 6000, "settle_ms": 1200},
         note="收尾：因果链回扣",
     )
 
@@ -580,7 +587,9 @@ def plan(course: dict, profile: str = "core", overrides: dict | None = None) -> 
         badge="完",
         data=[{"label": "", "value": e, "kind": "exam"} for e in exam_bits[:4]],
         formula="", bullets=[],
-        capture={"step": 0, "mode": "still", "actions": [], "settle_ms": 1200},
+        capture={"step": 0, "mode": "motion",
+                 "actions": [{"type": "orbit", "seconds": 5.0, "speed": 0.7}],
+                 "motion_ms": 5500, "settle_ms": 1200},
         note="结尾：考点清单",
     )
 

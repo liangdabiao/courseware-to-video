@@ -31,6 +31,8 @@ export type TrackSample = {
 
 export type TrackField = {
   key: string;
+  label?: string | null;   // 课件自带的中文名
+  unit?: string | null;
   min: number;
   max: number;
   from: number;

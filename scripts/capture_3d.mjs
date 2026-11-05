@@ -168,6 +168,53 @@ async function runActions(page, actions, stepIndex) {
 }
 
 /**
+ * 一次读出"所有实时读数"。
+ *
+ * live() 里有课件的内部状态（Vread / 液面 / 离子计数 / 颜色），
+ * 但**主读数（这里是 pH）在 HUD 的 DOM 元素里**，不在 live() 中。
+ * 所以两处都读：live 给结构化数值，HUD 给主读数。
+ *
+ * 读 DOM 只取 innerText 的第一行纯数字部分，避免把 "锥形瓶 pH" 这种标题混进来。
+ */
+const PROBE_EXPR = `(function(){
+  function numOf(el){
+    if (!el) return null;
+    // 注意：必须用 textContent，不能用 innerText。
+    // 抓帧时我们把整个 UI 设成 visibility:hidden，
+    // 而 innerText 对隐藏元素返回空串 —— pH 就这么丢的。
+    var t = String(el.textContent || '');
+    var lines = t.split('\\n').map(function(s){return s.trim();}).filter(Boolean);
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/-?\\d+(\\.\\d+)?/);
+      if (m) {
+        // 第一行是标题（如"锥形瓶 pH"），第二行才是数字
+        if (i === 0 && !/^[-+]?\\d/.test(lines[i])) continue;
+        return parseFloat(m[0]);
+      }
+    }
+    return null;
+  }
+  var out = {};
+  try { var l = window.__lab.live() || {}; for (var k in l) out[k] = l[k]; } catch(e) {}
+  try {
+    var h = window.__lab.hud || {};
+    var main = numOf(h.kpiEl);
+    if (main !== null) out.__main = main;
+    var rate = numOf(h.rateEl);
+    if (rate !== null) out.__rate = rate;
+    // subs：每条副读数
+    var subs = h.subs || [];
+    for (var i = 0; i < subs.length; i++) {
+      var s = subs[i];
+      var el = s.el || s.value || s.node;
+      var v = numOf(el);
+      if (v !== null) out['__sub' + i] = v;
+    }
+  } catch(e) {}
+  return JSON.stringify(out);
+})()`;
+
+/**
  * 读数采样器：在录制期间持续读 window.__lab.live()，
  * 得到"时间 → 关键读数"的曲线。
  *
@@ -186,7 +233,7 @@ function makeSampler(page, {intervalMs = 110} = {}) {
       if (!busy) {
         busy = true;
         try {
-          const raw = await page.evaluate('JSON.stringify(window.__lab.live())');
+          const raw = await page.evaluate(PROBE_EXPR);
           const obj = JSON.parse(raw);
           samples.push({t: Date.now(), v: obj});
         } catch {
@@ -207,8 +254,13 @@ function makeSampler(page, {intervalMs = 110} = {}) {
   };
 }
 
-/** 从 live() 里挑出适合上屏的读数（数值型、且变化明显）。 */
-function pickTrackFields(samples) {
+/**
+ * 从采样里挑出适合上屏的读数（数值型、且变化明显）。
+ *
+ * 标签从课件自己的 CONSOLE 里取 —— 那里写着"锥形瓶 pH""滴定管末读数"
+ * 这类中文名，比自己猜字段名靠谱得多。
+ */
+function pickTrackFields(samples, labels = {}) {
   if (!samples.length) return [];
   const keys = new Set();
   for (const s of samples) {
@@ -223,11 +275,65 @@ function pickTrackFields(samples) {
     const mn = Math.min(...vals);
     const mx = Math.max(...vals);
     if (Math.abs(mx - mn) < 1e-9) continue;  // 没变化的量不上屏
-    out.push({key: k, min: mn, max: mx, from: vals[0], to: vals[vals.length - 1]});
+    out.push({
+      key: k,
+      label: labels[k] || null,
+      unit: labels[k + ':unit'] || null,
+      min: mn,
+      max: mx,
+      from: vals[0],
+      to: vals[vals.length - 1],
+    });
   }
-  // 变化量大的排前面
-  out.sort((a, b) => Math.abs(b.to - b.from) - Math.abs(a.to - a.from));
-  return out.slice(0, 6);
+  // 排序：主读数（__main）和副读数（__sub*）是课件明确展示给学生的，
+  // 优先保留；其余按变化量排。
+  const rank = (k) => {
+    if (k === '__main') return 0;
+    if (k.startsWith('__sub')) return 1;
+    if (k === '__rate') return 2;
+    return 3;
+  };
+  out.sort((a, b) => {
+    const ra = rank(a.key);
+    const rb = rank(b.key);
+    if (ra !== rb) return ra - rb;
+    return Math.abs(b.to - b.from) - Math.abs(a.to - a.from);
+  });
+  // 主读数最多 4 个（主 + 3 副），其余字段最多再带 2 个
+  const main = out.filter((f) => rank(f.key) < 3).slice(0, 4);
+  const extra = out.filter((f) => rank(f.key) >= 3).slice(0, 2);
+  return [...main, ...extra];
+}
+
+/**
+ * 从课件的 CONSOLE 里读读数的中文标签。
+ * CONSOLE.main.label 是主读数名，CONSOLE.subs[].label 是副读数名。
+ */
+async function readLabels(page) {
+  try {
+    const raw = await page.evaluate(`(function(){
+      var c = window.__lab.CONSOLE || {};
+      var out = {};
+      if (c.main && c.main.label) {
+        out['__main'] = c.main.label;
+        if (c.main.unit) out['__main:unit'] = c.main.unit;
+      }
+      if (c.rate && c.rate.label) out['__rate'] = c.rate.label;
+      (c.subs || []).forEach(function(s, i) {
+        if (s.label) out['__sub' + i] = s.label;
+      });
+      (c.sliders || []).forEach(function(s) {
+        if (s.key && s.label) {
+          out[s.key] = s.label;
+          if (s.unit) out[s.key + ':unit'] = s.unit;
+        }
+      });
+      return JSON.stringify(out);
+    })()`);
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
 }
 
 async function main() {
@@ -330,6 +436,18 @@ async function main() {
       }
     }
 
+    // 读数标签（中文名来自课件自己的 CONSOLE）
+    const labels = await readLabels(page);
+    console.log(
+      '读数标签: ' +
+        (Object.keys(labels).length
+          ? Object.entries(labels)
+              .filter(([k]) => !k.endsWith(':unit'))
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ')
+          : '（课件未提供）'),
+    );
+
     for (const shot of shots) {
       const cap = shot.capture;
       const step = cap.step ?? 0;
@@ -364,7 +482,7 @@ async function main() {
           note = `motion ${frames.length}帧 @${fps.toFixed(1)}fps | ${log.join('; ')}`;
         }
         // 读数曲线：给 Remotion 做"随画面滚动的数字"
-        const fields = pickTrackFields(sampler.samples);
+        const fields = pickTrackFields(sampler.samples, labels);
         if (fields.length) {
           const t0 = sampler.samples.length ? sampler.samples[0].t : rt0;
           const track = {

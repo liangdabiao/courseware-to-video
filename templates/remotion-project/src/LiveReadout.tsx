@@ -88,7 +88,13 @@ const ReadoutRow: React.FC<{
   frame: number;
   delay: number;
 }> = ({field, value, frame, delay}) => {
-  const meta = TRACK_LABELS[field.key] || {label: field.key};
+  // 优先用轨里带的标签（抓帧时从课件 CONSOLE 读的中文名），
+  // 没有才退回内置表。
+  const meta =
+    field.label || TRACK_LABELS[field.key]
+      ? {label: field.label || TRACK_LABELS[field.key].label,
+         unit: field.unit || TRACK_LABELS[field.key]?.unit}
+      : {label: field.key};
   const span = Math.abs(field.max - field.min) || 1;
   // 进度条：从 field.from 走到 field.to
   const p = Math.max(0, Math.min(1, (value - field.from) / (field.to - field.from || 1)));
