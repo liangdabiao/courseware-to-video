@@ -54,6 +54,7 @@ export const CourseVideo: React.FC = () => {
                 stepLabel={stepLabel}
                 progress={progress}
                 credit={script.project.credit}
+                fps={FPS}
               />
             </Series.Sequence>
           );

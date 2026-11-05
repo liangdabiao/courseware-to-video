@@ -76,14 +76,31 @@ def main() -> int:
             shot["image"] = None
             shot["clip"] = None
 
+        # 读数轨（capture_3d.mjs 在录运动片段时采的实时读数曲线）
+        # 有了它，讲解层可以放"随画面滚动的数字"。
+        track_path = media_dir / "_tracks" / f"{sid}.json"
+        if track_path.exists():
+            try:
+                track = json.loads(track_path.read_text(encoding="utf-8"))
+                if track.get("samples"):
+                    shot["track"] = track
+                else:
+                    shot["track"] = None
+            except json.JSONDecodeError:
+                shot["track"] = None
+        else:
+            shot["track"] = None
+
         total += shot["duration_sec"]
 
     script["project"]["duration_sec"] = round(total, 2)
     spec_path.write_text(json.dumps(script, ensure_ascii=False, indent=2),
                          encoding="utf-8")
 
+    n_track = sum(1 for sh in script["shots"] if sh.get("track"))
     print(f"镜头 {len(script['shots'])} 个，成片约 {total:.1f}s "
-          f"({int(total // 60)} 分 {total % 60:.0f} 秒)")
+          f"({int(total // 60)} 分 {total % 60:.0f} 秒)"
+          f"｜动态读数镜 {n_track} 个")
     if missing:
         print(f"⚠ 缺音频 {len(missing)} 个: {', '.join(missing)}")
     else:

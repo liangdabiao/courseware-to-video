@@ -16,6 +16,7 @@
  *         {"type": "set",    "key": "stage", "value": 0},
  *         {"type": "toggle", "key": "flood"},
  *         {"type": "tween",  "key": "reach", "to": 1, "seconds": 1.6},
+ *         {"type": "sweep",  "key": "V", "via": [0, 5, 10, 15, 20.9], "hold": 600},
  *         {"type": "orbit",  "seconds": 4},
  *         {"type": "wait",   "ms": 900}
  *       ],
@@ -28,6 +29,7 @@
  * 输出：
  *   <out>/<shot_id>.png   静帧
  *   <out>/<shot_id>.mp4   运动片段（screencast 抓帧 → ffmpeg 编码）
+ *   <out>/_tracks/<shot_id>.json  录制期间采到的实时读数曲线（给 Remotion 做动态数字）
  *
  * 三个必须做对的地方（都是实测踩出来的）：
  *  1. 必须 GPU：--use-angle=d3d11 --enable-gpu，软件渲染只有 2.6fps。
@@ -76,6 +78,9 @@ async function runActions(page, actions, stepIndex) {
   const log = [];
   if (!actions || !actions.length) return log;
 
+  // orbit 走后台：这样"边转边调参数"能同时发生，而不是排队。
+  const bg = [];
+
   for (const a of actions) {
     const t = a.type;
     if (t === 'set') {
@@ -98,20 +103,25 @@ async function runActions(page, actions, stepIndex) {
       await page.evaluate(`(function(){
         var c = window.__lab.controls;
         if (!c) return 0;
-        c.autoRotate = true; c.autoRotateSpeed = 1.5;
+        c.autoRotate = true; c.autoRotateSpeed = ${a.speed || 1.5};
         return 1;
       })()`);
-      await sleep((a.seconds || 3) * 1000);
-      await page.evaluate(`(function(){
-        var c = window.__lab.controls;
-        if (c) c.autoRotate = false;
-        return 1;
-      })()`);
-      log.push(`orbit ${a.seconds || 3}s`);
+      const secs = a.seconds || 3;
+      bg.push(
+        (async () => {
+          await sleep(secs * 1000);
+          await page.evaluate(`(function(){
+            var c = window.__lab.controls;
+            if (c) c.autoRotate = false;
+            return 1;
+          })()`);
+        })(),
+      );
+      log.push(`orbit ${secs}s（后台）`);
     } else if (t === 'tween') {
       // 课件的 set 是瞬时的；tween 用多次逼近产生连续运动
       const dur = (a.seconds || 1.5) * 1000;
-      const steps = 26;
+      const steps = Math.max(8, Math.round(dur / 40));
       const cur = JSON.parse(
         await page.evaluate(
           `JSON.stringify(window.__lab.live()[${JSON.stringify(a.key)}] ?? null)`,
@@ -127,6 +137,23 @@ async function runActions(page, actions, stepIndex) {
         await sleep(dur / steps);
       }
       log.push(`tween ${a.key}: ${from} → ${to}`);
+    } else if (t === 'sweep') {
+      // 连续扫过一串取值，每档停一下 —— 让学生看清"参数变了会怎样"。
+      // via 可以是 [a, b, c]（逐档）也可以是 [a, b] + {"back": true}（来回）。
+      const via = Array.isArray(a.via) ? a.via : [];
+      const hold = a.hold ?? 700;
+      const back = !!a.back;
+      const seq = back ? [...via, ...via.slice(0, -1).reverse()] : via;
+      for (const v of seq) {
+        await page.evaluate(
+          `window.__lab.set(${JSON.stringify(a.key)}, ${JSON.stringify(v)})`,
+        );
+        await sleep(hold);
+      }
+      log.push(`sweep ${a.key}: ${seq.join(' → ')}`);
+    } else if (t === 'hold') {
+      await sleep(a.ms || 800);
+      log.push(`hold ${a.ms || 800}ms`);
     } else if (t === 'wait') {
       await sleep(a.ms || 500);
       log.push(`wait ${a.ms || 500}ms`);
@@ -135,7 +162,72 @@ async function runActions(page, actions, stepIndex) {
       log.push(`eval → ${JSON.stringify(r)}`);
     }
   }
+
+  await Promise.all(bg);
   return log;
+}
+
+/**
+ * 读数采样器：在录制期间持续读 window.__lab.live()，
+ * 得到"时间 → 关键读数"的曲线。
+ *
+ * 为什么必须采样：课件把 pH、滴定管读数、离子计数都写在 live() 里，
+ * 但渲染出来的是 3D 画面，数字在课件自己的 UI 上（已被隐藏）。
+ * 采下来后，Remotion 就能在讲解层做"随画面滚动的数字"，
+ * 让观众看到读数跟着参数一起变 —— 这才是"动态"。
+ */
+function makeSampler(page, {intervalMs = 110} = {}) {
+  const samples = [];
+  let running = true;
+  let busy = false;
+
+  const tick = async () => {
+    while (running) {
+      if (!busy) {
+        busy = true;
+        try {
+          const raw = await page.evaluate('JSON.stringify(window.__lab.live())');
+          const obj = JSON.parse(raw);
+          samples.push({t: Date.now(), v: obj});
+        } catch {
+          // 页面正在导航/异常时忽略这一帧
+        }
+        busy = false;
+      }
+      await sleep(intervalMs);
+    }
+  };
+  const done = tick();
+  return {
+    samples,
+    async stop() {
+      running = false;
+      await done;
+    },
+  };
+}
+
+/** 从 live() 里挑出适合上屏的读数（数值型、且变化明显）。 */
+function pickTrackFields(samples) {
+  if (!samples.length) return [];
+  const keys = new Set();
+  for (const s of samples) {
+    for (const k of Object.keys(s.v || {})) {
+      const val = s.v[k];
+      if (typeof val === 'number' && Number.isFinite(val)) keys.add(k);
+    }
+  }
+  const out = [];
+  for (const k of keys) {
+    const vals = samples.map((s) => s.v[k]);
+    const mn = Math.min(...vals);
+    const mx = Math.max(...vals);
+    if (Math.abs(mx - mn) < 1e-9) continue;  // 没变化的量不上屏
+    out.push({key: k, min: mn, max: mx, from: vals[0], to: vals[vals.length - 1]});
+  }
+  // 变化量大的排前面
+  out.sort((a, b) => Math.abs(b.to - b.from) - Math.abs(a.to - a.from));
+  return out.slice(0, 6);
 }
 
 async function main() {
@@ -255,6 +347,7 @@ async function main() {
       if (cap.mode === 'motion') {
         // 先开录，再执行动作，运动才会被录进去
         const rec = await page.startRecord({quality: 82});
+        const sampler = makeSampler(page);
         const rt0 = Date.now();
         await sleep(200);
         const log = await runActions(page, cap.actions, step);
@@ -262,12 +355,37 @@ async function main() {
         const remain = target - (Date.now() - rt0);
         if (remain > 200) await sleep(remain);
         const {frames, fps} = await rec.stop();
+        await sampler.stop();
         if (!frames.length) {
           console.error(`  ✗ ${shot.id}: 没有抓到帧`);
         } else {
           file = path.join(outDir, `${shot.id}.mp4`);
           await framesToMp4(frames, file, Math.max(20, Math.round(fps)));
           note = `motion ${frames.length}帧 @${fps.toFixed(1)}fps | ${log.join('; ')}`;
+        }
+        // 读数曲线：给 Remotion 做"随画面滚动的数字"
+        const fields = pickTrackFields(sampler.samples);
+        if (fields.length) {
+          const t0 = sampler.samples.length ? sampler.samples[0].t : rt0;
+          const track = {
+            id: shot.id,
+            step,
+            duration_ms: Math.max(1, Date.now() - t0),
+            fields,
+            samples: sampler.samples.map((sm) => {
+              const o = {t: sm.t - t0};
+              for (const f of fields) o[f.key] = sm.v[f.key];
+              return o;
+            }),
+          };
+          const trackDir = path.join(outDir, '_tracks');
+          fs.mkdirSync(trackDir, {recursive: true});
+          fs.writeFileSync(
+            path.join(trackDir, `${shot.id}.json`),
+            JSON.stringify(track),
+            'utf8',
+          );
+          note += ` | 读数轨 ${fields.map((f) => f.key).join(',')}`;
         }
       } else {
         const before = await Lab.live(page);

@@ -306,7 +306,14 @@ def unit_of(step: dict, units: list[dict]) -> dict | None:
 
 
 def build_capture_actions(step: dict, mode: str, ov: dict) -> list[dict]:
-    """把课件的 act 翻译成抓画面时执行的动作。"""
+    """把课件的 act 翻译成抓画面时执行的动作。
+
+    设计原则（用户 2026-11-05 反馈：「动态太少」）：
+      一镜 = 一条**连续的变化过程**，不是一个瞬时状态。
+      所以 slider 要扫过一串中间值（学生看到"参数变了会怎样"），
+      而不是一步到位；toggles 要开关来回（学生看到对比）；
+      轨道旋转放进后台与参数变化同时发生。
+    """
     act = step.get("act") or {}
     kind = act.get("kind")
     key = act.get("key")
@@ -320,19 +327,63 @@ def build_capture_actions(step: dict, mode: str, ov: dict) -> list[dict]:
         to = demo if demo is not None else act.get("to")
         if to is None:
             return []
-        if mode == "motion":
-            return [{"type": "tween", "key": key, "to": to, "seconds": 1.8}]
-        return [{"type": "set", "key": key, "value": to}]
+        if mode != "motion":
+            return [{"type": "set", "key": key, "value": to}]
+        # 分段扫描：0 → 1/3 → 2/3 → 终点，每档停一下
+        via = [round(to * r, 4) for r in (0.34, 0.67)]
+        via.append(to)
+        return [
+            {"type": "sweep", "key": key, "via": via, "hold": 900},
+            {"type": "orbit", "seconds": 2.2, "speed": 1.2},
+        ]
     if kind == "toggle" and key is not None:
-        return [{"type": "toggle", "key": key}]
+        if mode != "motion":
+            return [{"type": "toggle", "key": key}]
+        # 开→看→关→再看，对比才看得出差别
+        return [
+            {"type": "toggle", "key": key},
+            {"type": "hold", "ms": 1400},
+            {"type": "toggle", "key": key},
+            {"type": "hold", "ms": 1400},
+            {"type": "orbit", "seconds": 2.0, "speed": 1.2},
+        ]
     if kind == "switch" and key is not None:
-        return [{"type": "switch", "key": key, "value": demo if demo is not None else True}]
+        v = demo if demo is not None else True
+        if mode != "motion":
+            return [{"type": "switch", "key": key, "value": v}]
+        return [
+            {"type": "switch", "key": key, "value": v},
+            {"type": "hold", "ms": 1500},
+            {"type": "orbit", "seconds": 2.4, "speed": 1.3},
+        ]
     if kind == "orbit":
-        return [{"type": "orbit", "seconds": 4.0}] if mode == "motion" else []
+        return [{"type": "orbit", "seconds": 5.0, "speed": 1.4}] if mode == "motion" else []
     if kind == "custom":
-        return [{"type": "demo"}]
+        if mode != "motion":
+            return [{"type": "demo"}]
+        # 作者的演示动画 + 缓慢环绕，两件事同时发生
+        return [
+            {"type": "demo"},
+            {"type": "orbit", "seconds": 4.5, "speed": 1.1},
+            {"type": "hold", "ms": 1200},
+        ]
+    if kind == "hold":
+        return [{"type": "demo"}, {"type": "orbit", "seconds": 4.0, "speed": 1.1}]
     return []
 
+
+
+def ask_actions(step: dict, ov: dict) -> list[dict]:
+    """提问镜的动作：只做"观察性"的动态，不去触发答案。
+
+    提问时画面已经在正确的观察状态（课件自己 goto 到该步的初始态），
+    所以这里只让相机缓缓环绕，让学生看清场景全貌，
+    而不是停在死板的静帧上。
+    """
+    custom = (ov.get("ask_actions") or {}).get(str(step["index"]))
+    if custom:
+        return custom
+    return [{"type": "orbit", "seconds": 5.0, "speed": 0.9}]
 
 def make_headline(step: dict, items: list[dict]) -> str:
     """大字：优先用 expect 里的"冲淤判据"（那才是这一步的教学结论），
@@ -443,8 +494,9 @@ def plan(course: dict, profile: str = "core", overrides: dict | None = None) -> 
             unit_no=clean_for_screen(u.get("no", "")) if u else "",
             data=([{"label": "", "value": u.get("name", ""), "kind": "unit"}] if u else []),
             formula="", bullets=[],
-            capture={"step": i, "mode": "still",
-                     "actions": build_capture_actions(step, "still", ov),
+            capture={"step": i, "mode": "motion",
+                     "actions": ask_actions(step, ov),
+                     "motion_ms": 5200,
                      "settle_ms": 1200},
             note=f"第 {i + 1} 步 · 提问",
         )
@@ -465,7 +517,7 @@ def plan(course: dict, profile: str = "core", overrides: dict | None = None) -> 
                      + [clean_for_screen(p) for p in pts[1:3]]),
             capture={"step": i, "mode": "motion",
                      "actions": build_capture_actions(step, "motion", ov),
-                     "motion_ms": 3600, "settle_ms": 1000},
+                     "motion_ms": 7200, "settle_ms": 1000},
             note=f"第 {i + 1} 步 · 动手演示与读数",
         )
 

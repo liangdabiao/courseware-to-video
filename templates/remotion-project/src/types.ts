@@ -19,6 +19,32 @@ export type DataItem = {
   kind?: 'value' | 'judge' | 'note' | 'unit' | 'chain' | 'exam';
 };
 
+/**
+ * 录制期间采到的实时读数曲线。
+ * 由 capture_3d.mjs 在录运动片段时同步读 window.__lab.live() 得到。
+ * 有了它，讲解层可以放"随画面滚动的数字"，让读数跟着参数一起变。
+ */
+export type TrackSample = {
+  t: number;          // 相对录制开始的毫秒
+  [key: string]: number;
+};
+
+export type TrackField = {
+  key: string;
+  min: number;
+  max: number;
+  from: number;
+  to: number;
+};
+
+export type Track = {
+  id: string;
+  step: number;
+  duration_ms: number;
+  fields: TrackField[];
+  samples: TrackSample[];
+};
+
 export type CaptureSpec = {
   step: number;
   mode: 'still' | 'motion';
@@ -50,6 +76,8 @@ export type Shot = {
   // 抓帧产物
   image?: string | null;
   clip?: string | null;
+  // 读数轨（动态数字）
+  track?: Track | null;
 };
 
 export type Project = {

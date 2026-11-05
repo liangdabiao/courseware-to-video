@@ -34,6 +34,7 @@ import {
   cardShadow,
   enterUp,
 } from './ui';
+import {LiveReadout} from './LiveReadout';
 import type {DataItem, Shot} from './types';
 
 /** 静帧的慢推镜头，避免画面完全静止 */
@@ -511,6 +512,7 @@ const BodyScene: React.FC<{
   stepLabel: string;
   progress: number;
   credit: string;
+  fps: number;
 }> = ({
   shot,
   frame,
@@ -520,6 +522,7 @@ const BodyScene: React.FC<{
   stepLabel,
   progress,
   credit,
+  fps,
 }) => {
   const data = shot.data || [];
   const cards = data.filter((d) => d.kind === 'value' || d.kind === 'judge');
@@ -605,6 +608,7 @@ const BodyScene: React.FC<{
                 <FormulaBar text={shot.formula} frame={frame} delay={8} />
               ) : null}
               <DataCards items={cards} frame={frame} />
+              <LiveReadout track={shot.track} fps={fps} max={3} />
               {shot.eq_note ? (
                 <div
                   style={{
@@ -650,6 +654,7 @@ export const Scene: React.FC<{
   stepLabel: string;
   progress: number;
   credit: string;
+  fps: number;
 }> = ({
   shot,
   index,
@@ -659,6 +664,7 @@ export const Scene: React.FC<{
   stepLabel,
   progress,
   credit,
+  fps,
 }) => {
   const frame = useCurrentFrame();
   return (
@@ -680,6 +686,7 @@ export const Scene: React.FC<{
           stepLabel={stepLabel}
           progress={progress}
           credit={credit}
+          fps={fps}
         />
       )}
       <span style={{display: 'none'}}>{index}</span>
