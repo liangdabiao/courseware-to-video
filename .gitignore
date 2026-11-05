@@ -1,0 +1,23 @@
+# ---- 依赖 / 构建产物 ----
+node_modules/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+
+# ---- 工作产物（仓库根目录）----
+/media/
+/audio/
+/out/
+/build/
+/dist/
+/course.json
+/script.json
+/讲稿.md
+/overrides.json
+
+# ---- 杂项 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
