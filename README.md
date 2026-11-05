@@ -12,7 +12,30 @@
 
 ## 样片
 
-用「河流地貌的发育」课件（铜匠实验室）跑出来的成片：**89 秒 / 19 镜 / 1080×1920**。
+### 样片 A · 强酸与强碱的中和滴定（高中化学）
+
+**102 秒 / 21 镜 / 1080×1920 / 零静帧**。
+重点展示动态：滴定管体积逐档推进、半滴微调、指示剂切换、四个误差开关逐个拨，
+pH 读数**随画面实时滚动**（13.02 → 10.53 → 7.00）。
+
+![提问](examples/titration-step/shot_30.jpg)
+
+<p align="center">
+  <img src="examples/titration-step/shot_45.jpg" width="240" alt="数据卡 + 实时读数">
+  <img src="examples/titration-step/shot_62.jpg" width="240" alt="运动片段">
+  <img src="examples/titration-step/shot_84.jpg" width="240" alt="误差开关">
+  <img src="examples/titration-step/shot_96.jpg" width="240" alt="考点清单">
+</p>
+
+| 数据卡 + 实时读数 | 运动片段 | 误差开关逐个拨 | 考点清单 |
+|---|---|---|---|
+
+📹 完整成片：[`examples/titration-step/样片-强酸与强碱的中和滴定.mp4`](examples/titration-step/样片-强酸与强碱的中和滴定.mp4)
+📝 逐拍讲稿：[`examples/titration-step/讲稿-强酸与强碱的中和滴定.md`](examples/titration-step/讲稿-强酸与强碱的中和滴定.md)
+
+### 样片 B · 河流地貌的发育（高中地理）
+
+**89 秒 / 19 镜 / 1080×1920**。
 
 ![开场](examples/river-step/shot_4.jpg)
 
