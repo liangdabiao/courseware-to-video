@@ -177,37 +177,56 @@ async function runActions(page, actions, stepIndex) {
  * 读 DOM 只取 innerText 的第一行纯数字部分，避免把 "锥形瓶 pH" 这种标题混进来。
  */
 const PROBE_EXPR = `(function(){
+  // 注意：必须用 textContent，不能用 innerText。
+  // 抓帧时我们把整个 UI 设成 visibility:hidden，
+  // 而 innerText 对隐藏元素返回空串 —— pH 就这么丢的。
+  //
+  // 但 textContent 又会把所有子 div 拼成一行（没有换行），
+  // 于是"锥形瓶 pH 达标 12.65"里的数字和标题混在一起。
+  // 解法：读 innerText 的**换行版**取标题行，
+  //      数值优先从课件给的纯数字元素里取（rateEl / subs[i].el）。
   function numOf(el){
     if (!el) return null;
-    // 注意：必须用 textContent，不能用 innerText。
-    // 抓帧时我们把整个 UI 设成 visibility:hidden，
-    // 而 innerText 对隐藏元素返回空串 —— pH 就这么丢的。
-    var t = String(el.textContent || '');
-    var lines = t.split('\\n').map(function(s){return s.trim();}).filter(Boolean);
-    for (var i = 0; i < lines.length; i++) {
-      var m = lines[i].match(/-?\\d+(\\.\\d+)?/);
-      if (m) {
-        // 第一行是标题（如"锥形瓶 pH"），第二行才是数字
-        if (i === 0 && !/^[-+]?\\d/.test(lines[i])) continue;
-        return parseFloat(m[0]);
-      }
-    }
+    var raw = String(el.textContent || '');
+    // 纯数字元素（rateEl / subs.el）直接 parse
+    var direct = raw.match(/^\\s*(-?\\d+(?:\\.\\d+)?)\\s*$/);
+    if (direct) return parseFloat(direct[1]);
+    // 退化：找最后一个独立的数字（前面不是数字字符）
+    var all = raw.match(/-?\\d+(?:\\.\\d+)?/g);
+    if (!all || !all.length) return null;
+    return parseFloat(all[all.length - 1]);
+  }
+  function titleOf(el){
+    if (!el) return null;
+    // 用 innerText 的第一行（标题），但隐藏元素下 innerText 为空，
+    // 所以用第一个 class="lb"/子 div 的 textContent
+    var lb = el.querySelector ? el.querySelector('.lb, .label, .t') : null;
+    if (lb) return String(lb.textContent || '').trim();
+    var first = el.firstElementChild;
+    if (first) return String(first.textContent || '').trim();
     return null;
   }
+
   var out = {};
   try { var l = window.__lab.live() || {}; for (var k in l) out[k] = l[k]; } catch(e) {}
+
   try {
     var h = window.__lab.hud || {};
-    var main = numOf(h.kpiEl);
-    if (main !== null) out.__main = main;
-    var rate = numOf(h.rateEl);
-    if (rate !== null) out.__rate = rate;
-    // subs：每条副读数
+    var main = numOf(h.rateEl);          // 纯数字元素 = 主读数值
+    if (main !== null) {
+      out.__main = main;
+      var mt = titleOf(h.kpiEl);
+      if (mt) out['__main:label'] = mt;
+    }
+    // 副读数：数值在 <b> 标签里（结构：<div class=lb>标题</div><b>数值</b>…），
+    // 容器里还有标题与说明文字，直接读容器会取错数字。
     var subs = h.subs || [];
     for (var i = 0; i < subs.length; i++) {
       var s = subs[i];
       var el = s.el || s.value || s.node;
-      var v = numOf(el);
+      if (!el) continue;
+      var b = el.querySelector ? el.querySelector('b') : null;
+      var v = numOf(b || el);
       if (v !== null) out['__sub' + i] = v;
     }
   } catch(e) {}
@@ -293,6 +312,13 @@ function pickTrackFields(samples, labels = {}) {
     if (k === '__rate') return 2;
     return 3;
   };
+  // 主读数的标签：CONSOLE 里的中文名优先，HUD 现场取的兜底
+  for (const f of out) {
+    if (f.key === '__main') {
+      f.label = labels['__main'] || labels['__main:label'] || null;
+      f.unit = labels['__main:unit'] || null;
+    }
+  }
   out.sort((a, b) => {
     const ra = rank(a.key);
     const rb = rank(b.key);
@@ -318,10 +344,16 @@ async function readLabels(page) {
         out['__main'] = c.main.label;
         if (c.main.unit) out['__main:unit'] = c.main.unit;
       }
-      if (c.rate && c.rate.label) out['__rate'] = c.rate.label;
       (c.subs || []).forEach(function(s, i) {
         if (s.label) out['__sub' + i] = s.label;
       });
+      // HUD 现场的主读数标题（比 CONSOLE 更贴近当下显示）
+      try {
+        var h = window.__lab.hud || {};
+        var kpi = h.kpiEl;
+        var lb = kpi && kpi.querySelector ? kpi.querySelector('.lb') : null;
+        if (lb && lb.textContent) out['__main:label'] = String(lb.textContent).trim();
+      } catch(e) {}
       (c.sliders || []).forEach(function(s) {
         if (s.key && s.label) {
           out[s.key] = s.label;

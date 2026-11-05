@@ -525,7 +525,25 @@ const BodyScene: React.FC<{
   fps,
 }) => {
   const data = shot.data || [];
-  const cards = data.filter((d) => d.kind === 'value' || d.kind === 'judge');
+  // 读数条已经实时滚动的量，数据卡里就别再静态重复一遍。
+  // 判定方式：数据卡的数值里若含有读数轨的终值（且是主要变化的那个），
+  // 就认为这一项已被实时读数覆盖。
+  const trackFields = shot.track?.fields || [];
+  const mainField = trackFields.find((f) => f.key === '__main');
+  const isCoveredByReadout = (text: string): boolean => {
+    if (!mainField || !mainField.label) return false;
+    const s = String(text || '');
+    // 主读数标签可能是"锥形瓶 pH"，
+    // 而数据卡里写的是"pH 才从 13.02 降到 10.53"——
+    // 所以要比对标签里的**末位关键词**（"pH"）是否出现在数据卡文本里。
+    const kw = mainField.label.split(/[\s·、,，]+/).filter(Boolean).pop();
+    if (!kw || kw.length < 2) return false;
+    return s.includes(kw);
+  };
+  const cardsAll = data.filter((d) => d.kind === 'value' || d.kind === 'judge');
+  const cards = mainField
+    ? cardsAll.filter((d) => !isCoveredByReadout(d.value))
+    : cardsAll;
   const notes = data.filter((d) => d.kind === 'note').map((d) => d.value);
   const chains = data.filter((d) => d.kind === 'chain');
   const exams = data.filter((d) => d.kind === 'exam');
@@ -608,14 +626,14 @@ const BodyScene: React.FC<{
                 <FormulaBar text={shot.formula} frame={frame} delay={8} />
               ) : null}
               <DataCards items={cards} frame={frame} />
-              <LiveReadout track={shot.track} fps={fps} max={3} />
+              <LiveReadout track={shot.track} fps={fps} max={1} />
               {shot.eq_note ? (
                 <div
                   style={{
                     ...enterUp(frame, 16),
                     fontFamily: FONT,
                     fontSize: 24,
-                    color: COLORS.inkFaint,
+                    color: COLORS.inkSoft,
                     fontWeight: 600,
                     lineHeight: 1.4,
                   }}

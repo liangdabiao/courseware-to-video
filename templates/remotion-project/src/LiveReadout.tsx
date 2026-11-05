@@ -17,6 +17,7 @@
 import React from 'react';
 import {interpolate, useCurrentFrame} from 'remotion';
 import {COLORS, FONT} from './theme';
+import {cardShadow} from './ui';
 import type {Track, TrackField} from './types';
 
 /** 读数字段的中文标签与单位 */
@@ -81,42 +82,57 @@ const fmt = (v: number, field: TrackField): string => {
   return v.toFixed(4);
 };
 
-/** 单条读数 */
+/** 单条读数。primary=true 时是大号主读数（pH 这类），否则是小号副读数。 */
 const ReadoutRow: React.FC<{
   field: TrackField;
   value: number;
   frame: number;
   delay: number;
-}> = ({field, value, frame, delay}) => {
+  primary?: boolean;
+}> = ({field, value, frame, delay, primary}) => {
   // 优先用轨里带的标签（抓帧时从课件 CONSOLE 读的中文名），
   // 没有才退回内置表。
-  const meta =
-    field.label || TRACK_LABELS[field.key]
-      ? {label: field.label || TRACK_LABELS[field.key].label,
-         unit: field.unit || TRACK_LABELS[field.key]?.unit}
-      : {label: field.key};
+  const fallback = TRACK_LABELS[field.key];
+  const meta = {
+    label: field.label || fallback?.label || field.key,
+    unit: field.unit || fallback?.unit,
+  };
   const span = Math.abs(field.max - field.min) || 1;
   // 进度条：从 field.from 走到 field.to
   const p = Math.max(0, Math.min(1, (value - field.from) / (field.to - field.from || 1)));
   const up = field.to >= field.from;
 
+  const numSize = primary ? 52 : 30;
+  const labelSize = primary ? 21 : 19;
   return (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '9px 14px',
+        padding: primary ? '12px 16px' : '9px 14px',
         background: COLORS.paper,
-        borderRadius: 14,
+        borderRadius: primary ? 18 : 14,
         boxShadow: cardShadow,
-        borderLeft: `5px solid ${up ? COLORS.hot : COLORS.accent}`,
+        borderLeft: `6px solid ${up ? COLORS.hot : COLORS.accent}`,
       }}
     >
-      <div style={{flex: '0 0 auto', minWidth: 118}}>
-        <div style={{fontSize: 19, color: COLORS.inkSoft, fontWeight: 600, lineHeight: 1.25}}>
+      <div style={{flex: '0 0 auto', minWidth: primary ? 132 : 118}}>
+        <div
+          style={{
+            fontSize: labelSize,
+            color: COLORS.inkSoft,
+            fontWeight: 700,
+            lineHeight: 1.25,
+          }}
+        >
           {meta.label}
         </div>
+        {primary ? (
+          <div style={{fontSize: 17, color: COLORS.inkFaint, fontWeight: 600, marginTop: 2}}>
+            实时读数
+          </div>
+        ) : null}
       </div>
       <div
         style={{
@@ -129,17 +145,18 @@ const ReadoutRow: React.FC<{
       >
         <span
           style={{
-            fontSize: 32,
+            fontSize: numSize,
             fontWeight: 800,
             color: COLORS.ink,
             fontVariantNumeric: 'tabular-nums',
-            letterSpacing: '-0.01em',
+            letterSpacing: '-0.02em',
+            lineHeight: 1,
           }}
         >
           {fmt(value, field)}
         </span>
         {meta.unit ? (
-          <span style={{fontSize: 19, color: COLORS.inkFaint, fontWeight: 700}}>
+          <span style={{fontSize: primary ? 22 : 19, color: COLORS.inkFaint, fontWeight: 700}}>
             {meta.unit}
           </span>
         ) : null}
@@ -148,9 +165,9 @@ const ReadoutRow: React.FC<{
       <div
         style={{
           flex: '0 0 auto',
-          width: 78,
-          height: 8,
-          borderRadius: 4,
+          width: primary ? 96 : 78,
+          height: primary ? 10 : 8,
+          borderRadius: 5,
           background: COLORS.line,
           overflow: 'hidden',
           position: 'relative',
@@ -215,6 +232,7 @@ export const LiveReadout: React.FC<{
           value={cur[f.key]}
           frame={frame}
           delay={i * 3}
+          primary={i === 0}
         />
       ))}
     </div>

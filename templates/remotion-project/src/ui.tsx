@@ -282,7 +282,7 @@ export const BulletList: React.FC<{
             gap: 12,
             fontFamily: FONT,
             fontSize: 27,
-            color: COLORS.inkSoft,
+            color: COLORS.ink,
             lineHeight: 1.45,
           }}
         >
@@ -292,7 +292,7 @@ export const BulletList: React.FC<{
               width: 8,
               height: 8,
               borderRadius: 999,
-              background: COLORS.inkFaint,
+              background: COLORS.accent,
               marginTop: 13,
             }}
           />
